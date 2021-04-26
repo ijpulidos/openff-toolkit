@@ -44,12 +44,18 @@ print(dna.atoms[30].metadata)
 > {'residue_num':2, 'residue_name':'T', 'chain':'A'}
 
 # Where they attach
-protein_attachment = protein.mdtraj_sel('resname LYS and name HD2')[0]
-dna_attachment = dna.chemical_environment_matches('c1ccn([H:1])c1')[0]
-
+protein_attachment = protein.mdtraj_sel('resname LYS and name CD')
+dna_attachment = dna.chemical_environment_matches('c1ccn([H:1])c1')
+# What gets removed
+protein_to_remove = protein.mdtraj_sel('resname LYS and name HD2')
+dna_to_remove = dna.chemical_environment_matches('c1ccn([H:1])c1')
 
 # Merge the two
-new_molecule = Molecule.merge_molecules(protein, dna, protein_attachment, dna_attachment, 
+new_molecule = Molecule.merge_molecules(protein, dna,
+                                        protein_attachment,
+                                        dna_attachment,
+                                        protein_to_remove,
+                                        dna_to_remove,
                                         bond_order=1, keep_metadata=False)
 
 # Clear out old hierarchy definition and re-assign residue numbers and names
@@ -66,13 +72,17 @@ new_molecule.residues
 
 ```python
 # Merge the two
-new_molecule = Molecule.merge_molecules(protein, dna, protein_attachment, dna_attachment, 
+new_molecule = Molecule.merge_molecules(protein, dna,
+                                        protein_attachment,
+                                        dna_attachment,
+                                        protein_to_remove,
+                                        dna_to_remove,
                                         bond_order=1, keep_metadata=True)
 
 
 # The residue numbers will now collide because we specified keep_metadata=True
 new_molecule.residues
-> ALA A ALA T LYS C ALA G
+> ALA ALA LYS ALA A C T G
 
 new_molecule.residue(5)  # Selects atoms in 6th residue in iter, but this thinks it's residue number 3
 > <HierarchyElement with type residues with residue_num 3 residue_name C with chain A>
@@ -86,9 +96,12 @@ for residue in dna.residues:
 new_molecule = Molecule.merge_molecules(protein, dna, protein_attachment, dna_attachment, 
                                         bond_order=1, keep_metadata=True)   
     
-
+# If there are two iterators with the same name we extend them
 new_molecule.residues
 > ALA ALA LYS ALA A T C G
+
+new_molecule.residue(5)  
+> <HierarchyElement with type residues with residue_num 7 residue_name C with chain A>
 ```
 
 Why do I keep seeing the word "Hierarchy"?
@@ -101,6 +114,159 @@ print(protein.hierarchy_schemes)
 
 protein.add_hierarchy_scheme(...)
 
+
+```
+
+How do we keep track of changes?
+
+
+```python
+len(protein.atoms)
+> 80
+len(dna.atoms)
+> 100
+protein_attachment.hier_info['residue']
+> <HierarchyElement with type residues with residue_num 3 residue_name LYS with chain A>
+protein_attachment.index
+> 42
+dna_attachment.hier_info['residue']
+> <HierarchyElement with type residues with residue_num 1 residue_name C with chain A>
+dna_attachment.index
+> 11
+
+new_molecule = Molecule.merge_molecules(protein, dna,
+                                        protein_attachment,
+                                        dna_attachment,
+                                        protein_to_remove,
+                                        dna_to_remove,
+                                        bond_order=1, keep_metadata=True,
+                                        return_atom_maps=True
+                                       ) 
+
+len(new_molecule.atoms)
+> 178
+mol1_to_new_mol_idxs
+> {0: 0, 1: 1, ..., 42: 42, 43: 43, ..., 78: 78}  # One atom was removed
+mol2_to_new_mol_idx2
+> {0: 79, 1: 80, ..., 98: 177}
+
+new_molecule.residues
+> ALA ALA LYS ALA A T C G
+
+```
+
+Hybrid topology
+
+![](toluene_nitrobenzene_perses_small.png) 
+![](nitro_group_with_h_small.png)
+
+
+```python
+new_molecule, hybrid_molecule = Molecule.merge_molecules(mol1=toluene, 
+                                                         mol2=nitro_group_w_h, 
+                                                         mol1_attachment_points=[6], # from diagram above 
+                                                         mol2_attachment_points=[1], #the N in the nitro group
+                                                         mol1_atoms_to_delete=[7,13,14,15], #the methyl
+                                                         mol2_atoms_to_delete=[4] # a hydrogen
+                                                         bond_order=1, 
+                                                         return_hybrid_molecule=True)
+type(hybrid_molecule)
+> AtomTypedMolecule
+
+hybrid_molecule.n_atoms
+> 29 
+hybrid_molecule.n_atoms == toluene.n_atoms + nitro_group_w_h.n_atoms
+> True
+
+# The methyl carbon and Hs don't map to anything in the new mol
+print([(atom.molecule_atom_index,
+        atom.metadata['mol1_index'], 
+        atom.metadata['mol2_index'],
+        atom.metadata['new_molecule_index'])
+        for atom in hybrid_molecule.atoms])
+> [
+    (0,0,None,0), (1,1,None,1), ..., (6,6,None,6),               # in mol1 and new mol (& not mol2)
+    (7,7,None,None),                                             # Core atom (shared between both)
+    (8,8,None,8), ..., (12,12,None,12),                          # Hydrogens in the core/phenyl
+    (13, 13, None, None), (14, 14, None, None),                  # Only in mol1
+    (15, None, 0, 7), (16, None, 1, 13), (17, None, 2, 14),      # in mol2 and new mol (& not mol1)
+    (18, None, 3, None)                                          # Only in mol2
+]
+
+    
+
+```
+
+
+```python
+#Molecule.from_smiles('[O-][N+](=O)[H]')
+```
+
+Having residues as molecules with and without capping.
+
+* Redirect this to RD/OE substructures
+
+
+```python
+# Without caps
+oe_substructure = OpenEyeToolkitWrapper.hier_element_to_substructure(protein.residues[10])
+oe_substructure
+> <oechem.OEMol or AtomBondSet something>
+
+rdk_substructure = RDKitToolkitWrapper.hier_element_to_substructure(protein.residues[10])
+> <rdkit.Chem.Mol or Qmol or something>
+
+# ^^^Need feedback on return types for each toolkit^^^
+
+# With caps
+protein.residues[10].hierarchy_scheme.
+Molecule.from_amino_acid(protein.residues[10])
+protein.residues[10].to_capped_amino_acid(mol_class=Molecule)
+
+protein.residues[10]
+> <HierarchyElement with some settings>?
+OR
+> <ResidueHierarchyElement ...>?
+
+class SomeClass:
+    def __init__(self, handler):
+        self.handler = handler
+        
+instance = SomeClass(another_object)
+
+
+# Plugin interface? We need to learn more for this case
+capped_residue = Molecule.from_hier_element(protein.residues[10], capping_scheme='methyl')
+capped_residue
+> <openff.toolkit.topology.Molecule with SMILES CN[C@](C)C(=O)C >
+
+capped_residue = Molecule.from_hier_element(protein.residues[10], capping_scheme='n_charge')
+capped_residue
+> <openff.toolkit.topology.Molecule with SMILES [N+][C@](C)C(=O)C >
+
+#Where does CCD have these reactions?
+capped_residue = Molecule.from_hier_element(protein.residues[10], capping_scheme='from_ccd') 
+capped_residue
+> <openff.toolkit.topology.Molecule with SMILES [N+][C@](C)C(=O)[O-] >
+
+
+protein.hierarchy_schemes['residues'].capping_reactions 
+#Should it live in a ToolkitWrapper? Or HierarchyScheme/Element?
+> {'methyl': ('C(=O)C[N-:1]>[N:1]C',
+              '[C-:1]>[C:1]C'),
+   'n_charge': ('[N-:1]>[N+:1][H][H]')
+  }
+
+protein.residues[10].hierarchy_scheme
+> <HierarchyScheme with name 'residues' with uniqueness_criteria ('chain', 'residue_num', 'residue_name')> 
+
+
+
+# OR, if we don't want to store capping reactions:
+
+capped_residue = Molecule.from_hier_element(protein.residues[10], capping_reactions=['[N-:1]>[N+:1][H][H]']) 
+capped_residue
+> <openff.toolkit.topology.Molecule with SMILES [N+][C@](C)C(=O)[O-] >
 
 ```
 
@@ -583,6 +749,101 @@ protein.atoms[10].metadata['chain']
 > 'B'
 ```
 
+## Molecule vs. Topology hierarchies
+
+
+```python
+protein1 = Molecule.from_pdb_file('protein1.pdb')
+protein1.residues
+> ALA ALA LYS GLU
+protein1.chains
+> B
+
+protein1._data.hierarchies
+> [[<HierarchyScheme "residues">, [<HierarchyElement of type residue with id B 1 ALA>,
+                                   <HierarchyElement of type residue with id B 2 ALA>,
+                                   <HierarchyElement of type residue with id B 3 LYS>,
+                                   <HierarchyElement of type residue with id B 4 GLU>,]],
+   [<HierarchyScheme "chains">, [<HierarchyElement of type chain with id B>]
+   ]]
+
+protein1._data.hierarchies[0][0]                             
+> <HierarchyElement of type residue with id B 1 ALA>
+protein1._data.hierarchies[0][0].atoms
+> [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+
+protein1.atoms[0].metadata
+> {'residue_name': 'ALA', 'residue_num': 1, 'chain': 'A'}
+
+
+protein2 = Molecule.from_file('protein2.sdf')
+protein2.perceive_residues()
+protein2.residues
+> TYR GLU ALA PHE
+protein2.chains
+> A
+
+top = Topology.from_molecules([protein1, protein2])
+
+top.topology_molecules
+> [<TopologyMolecule with ref_mol protein1> <TopologyMolecule with ref_mol protein2>]
+
+# When adding a molecule to a topology, hierarchy is TRANSFERRED from the Molecule, to the TopologyMolecule
+# Existing hierarchies are ALWAYS iterated in TopologyMolecule order
+top.residues
+> ALA ALA LYS GLU TYR GLU ALA PHE
+
+top.chains
+> B A
+
+# protein1 and protein2 are now completely decoupled from the topology, only a COPY of each was added
+
+top.reference_molecules[0].residues
+> AttributeError
+top.reference_molecules[0]._data.hierarchies
+> []
+top.reference_molecules[0].atoms.metadata
+> {}
+
+# All of the metadata and hierarchy info was NOT COPIED to the reference molecule/atoms 
+# and instead is COPIED to the TopologyMolecule/atoms
+top.topology_molecules[0].residues
+> ALA ALA LYS GLU
+top.topology_molecules[0]._data.hierarchieaaaas
+> (all the stuff about residues and chains)
+top.topology_molecules[0].topology_atoms[0].metadata
+> {'residue_name': 'ALA', 'residue_num': 1, 'chain': 'A'}
+
+
+# Let's say we want to add another copy of protein1 to the topology, but with a different chain
+protein1.chains[0].chain = 'C'
+protein1.perceive_hierarchy(clear_existing=True)
+top.add_molecule(protein1)
+top.residues
+> ALA ALA LYS GLU TYR GLU ALA PHE ALA ALA LYS GLU
+# < ^protein1^  > <  ^protein2^ > <  ^protein1^ >
+top.chains
+> B A C
+
+
+class TopologyData(pydantic.BaseModel):
+    topology_molecules : Iterable[TopologyMolecule] = []
+    ...
+class TopologyMoleculeData(pydantic.BaseModel):
+    hierarchies : List[List[HierarchyScheme, List[HierarchyElement]]]
+
+class Topology:
+    ...
+    
+    def residues():
+        for top_mol in self.topology_molecules:
+            if hasattr(top_mol, 'residues'):
+                for residue in top_mol.residues:
+                    yield residue
+    
+        
+```
+
 ## Example. Protein - DNA merging
 
 We expect coordinates of both molecules to be in the same frame of reference.
@@ -699,14 +960,7 @@ mol.residue(6)
 
 ```
 
-## Adding removing/residues
-
 # Handling bonds
-
-
-```python
-
-```
 
 
 ```python
@@ -780,32 +1034,7 @@ except ValidationError as e:
     """
 ```
 
-    name='Samuel Colvin' username='scolvin' password1='zxcvbn' password2='zxcvbn'
-
-
-
-    ---------------------------------------------------------------
-
-    ValueError                    Traceback (most recent call last)
-
-    <ipython-input-5-62c3b29bec81> in <module>
-         43 
-         44 try:
-    ---> 45     protein = UserModel.from_sequence("AlaValGLY")
-         46 
-         47     #UserModel(
-
-
-    <ipython-input-5-62c3b29bec81> in from_sequence(cls, seq)
-         29         name = ' '.join(seq)
-         30         if 'GLY' in seq:
-    ---> 31             raise ValueError("GLY doesn't exist")
-         32         return cls(name=name, username='blah', password1='foo', password2='bar')
-         33 
-
-
-    ValueError: GLY doesn't exist
-
+# From MoSDeF meeting (notes)
 
 
 ```python
@@ -876,4 +1105,272 @@ for hier_level_1 in mb_complex.hierarchy:
         atom.metadata['complex'] = ...
     for hier_level_2 in hier_level_1.hierarchy:
         
+```
+
+# Perses use cases
+
+1. Coming with two molecules in SDF and a mapping between them
+
+
+```python
+# Loading two related molecules from SDF, and having an external tool provide an atom mapping
+ligand_1.n_atoms
+> 8
+
+protein_ligand_topology = Topology.from_molecules([protein, ligand_1, water*5000])
+
+ligand_2 = Molecule.from_file('ligand_2.sdf')
+ligand_2.n_atoms
+> 9
+
+ligand_1_top_mol = protein_ligand_topology.topology_molecules[1]
+
+env_atoms = [1, 2, 3, 4, 5, 6]
+atom_map = {1:1, 2:2, 3:3,
+            4:4, 5:5, 6:6, 
+            7:8, 8:7}
+#         ligand_1                     ligand_2                        hybrid_molecule     
+#                                                                                                    
+#           8                           7     9                           8       10   11                             
+#            \                           \   /                             \       |  /                               
+#             \                           \ /                               \      | /                               
+#              7                           8                                 7     9                             
+#              |                           |                                  \   /                              
+#              |                           |                                   \ /                                
+#              1                           1                                    1                                
+#            /    \                      /   \                                /   \                               
+#          2        6                   2     6                             2      6                           
+#          |        |                   |     |                             |      |                            
+#          |        |                   |     |                             |      |                            
+#          3        5                   3     5                             3      5                            
+#            \    /                      \   /                               \    /                             
+#              4                           4                                    4                             
+
+
+
+new_top, hybrid_top = protein_ligand_topology.replace_molecule(ligand1_top_mol, # This should be a _TopMol_ or TopMol idx
+                                                               ligand_2, # This can be either a Molecule or TopMol
+                                                               env_atoms, # a list of atom indices in ligand_1
+                                                               atom_map) # a dict like {ligand1_at_idx: ligand2_at_idx}
+
+# Internally, to do the transformation above, we'll need to "construct" one or more "molecule_2"s, such that 
+# merge_molecules(ligand1_top_mol, molecule_2) --> ligand_2
+
+new_top.reference_molecules
+> [<Molecule protein>, <Molecule ligand_2>, <Molecule water>]
+new_top.topology_molecules
+> [<TopologyMolecule with ref_mol protein>, 
+   <TopologyMolecule with ref_mol ligand_2>, 
+   <TopologyMolecule with ref_mol water>, 
+   <TopologyMolecule with ref_mol water>,
+   ...]
+new_top.topology_molecules[1].n_atoms
+> 9
+
+
+hybrid_top.reference_molecules
+> [<Molecule protein>, <AtomTypedMolecule hybrid_mol>, <Molecule water>]
+#               NOTE: ^^ NOTICE DIFFERENT TYPE HERE ^^
+hybrid_top.topology_molecules
+> [<TopologyMolecule with ref_mol protein>, 
+   <TopologyMolecule with ref_mol hybrid_mol>, 
+   <TopologyMolecule with ref_mol water>, 
+   <TopologyMolecule with ref_mol water>,
+   ...]
+hybrid_top.topology_molecules[1].n_atoms
+> 11
+
+assert hybrid_top.topology_molecules[1].n_atoms == ligand_1.n_atom + ligand_2.n_atoms - len(env_atoms)
+
+# Environment atom example
+new_top.topology_molecules[1].atom[6].metadata
+> {'old_top_index': 6, # the local TopologyMolecule atom index in protein_ligand_top
+   'hybrid_top_index': 6 # The local TopologyMolecule atom index in hybrid_top
+  }
+hybrid_top.topology_molecules[1].atom[6].metadata
+> {'new_top_index': 6  # the local TopologyMolecule atom index in new_top,
+   'old_top_index': 6}
+   
+# Modified atom example
+new_top.topology_molecules[1].atom[7].metadata
+> {'old_top_index': None, # the local TopologyMolecule atom index in protein_ligand_top
+   'hybrid_top_index': 9 # The local TopologyMolecule atom index in hybrid_top
+  }
+hybrid_top.topology_molecules[1].atom[9].metadata
+> {'new_top_index': 8  # the local TopologyMolecule atom index in new_top,
+   'old_top_index': None}
+```
+
+
+```python
+# Here's another way to do the above which would yield a different hybrid topology -- This is why `env_atoms` is important!!
+env_atoms = [1, 2, 3, 4, 5, 6, 7]
+atom_map = {1:1, 2:2, 3:3,
+            4:4, 5:5, 6:6, 
+            7:8, 8:7}
+#         ligand_1                     ligand_2                        hybrid_molecule     
+#                                                                                                    
+#           8                           7     9                             8   9   10                             
+#            \                           \   /                               \  |  /                                
+#             \                           \ /                                 \ | /                                 
+#              7                           8                                    7                             
+#              |                           |                                    |                            
+#              |                           |                                    |                               
+#              1                           1                                    1                                
+#            /    \                      /   \                                /   \                               
+#          2        6                   2     6                             2      6                           
+#          |        |                   |     |                             |      |                            
+#          |        |                   |     |                             |      |                            
+#          3        5                   3     5                             3      5                            
+#            \    /                      \   /                               \    /                             
+#              4                           4                                    4            
+
+```
+
+2. Coming in with a protein and switch to a different tautomer/protomer
+
+
+```python
+# TODO: Clean-up this part
+# Residue index we want to modify
+residue_idx = 10
+
+# Without caps
+oe_substructure = OpenEyeToolkitWrapper.hier_element_to_substructure(protein.residues[residue_idx])
+oe_substructure
+> <oechem.OEMol or AtomBondSet something>
+
+rdk_substructure = RDKitToolkitWrapper.hier_element_to_substructure(protein.residues[residue_idx])
+> <rdkit.Chem.Mol or Qmol or something>
+
+rdk_substructure.atoms[10].GetProp('original_mol_atom_index')
+> 110
+
+# ^^^Need feedback on return types for each toolkit^^^
+
+# Perses part
+atom_map = perses.mcss(rdk_substructure, rdk_new_mol)
+# What kind of map do we need?
+
+# Ideally for perses something like this could work
+new_protein = protein.mutate(protein.residues[residue_idx], 
+                             rdk_new_mol, 
+                             atom_map) # keys are indices from substructure, or entire original mol?
+
+
+# We have to know where the peptide bonds are located
+protein.residues[residue_idx]
+> HIE
+# the user may need to call percieve_residues and percieve hierarchy here again... This is undecided
+new_protein.residues[residue_idx]
+> HID
+
+# Do we want to change all the atom indices after this residue?
+# JW: Let's not do this -- We shouldn't make any guarantees about atom indices or order. 
+#     If users want to track an atom, they should use the hybrid molecule/topology.
+#protein.atoms[347:400]
+#> [<Atom with name C with element C>, <Atom with name O with element O>, ..., 
+#   <Atom with name N with element N>, <Atom with name H with element H>, ...] 
+#new_protein.atoms[347:399]
+#> [<Atom with name C with element C>, <Atom with name O with element O>, ..., 
+#   <Atom with name N with element N>, ...]
+
+
+```
+
+
+```python
+# Tentative implementation for mutate
+class Molecule:
+    def mutate(self, 
+               atom_indices_to_replace: List[int],
+               atoms_to_add: Molecule, #? or substructure?, 
+               atom_map: Dict[int:int], 
+               keep_metadata=True, 
+               return_hybrid_topology=False):
+        # TODO: We may need to cap `atoms_to_add` depending on how merge_molecules
+        #       ends up working
+        mol1_connection_points = []
+        mol2_connections_points = []
+        for bonds in self:
+            at1_idx = bonds.atom_1_index
+            at2_idx = bonds.atom_2_index
+            # TODO: Also check reverse direction ("if at2_idx in atom_map.keys()...")
+            if at1_idx in atom_map.keys():
+                mol1_connection_points.append(at1_idx)
+                mol2_connection_points.append(atom_map[at2_idx])
+                bond_orders.append(bond.bond_order)
+        new_mol, hyb_top = self.__cls__.merge_molecules(mol_1=self,
+                                                        mol_2=atoms_to_add,
+                                                        atoms_to_delete_1=atom_map.keys(),
+                                                        atoms_to_delete_2=[]
+                                                        connection_points_1=mol1_connection_points,
+                                                        connection_points_2=mol2_connection_points,
+                                                        bond_orders=bond_orders,
+                                                        keep_metadata=keep_metadata,
+                                                        percieve_hierarchy=False, # What's the best default behavior here?
+                                                        return_hybrid_topology=True #?
+                                                        )
+        # hyb_top could have 2 default HierarchySchemes -- mol1_index, mol2_index
+        
+        if transfer_metadata:
+            for atom in self.atoms:
+                new_mol.atoms[hyb_top.mol1_index[atom.index][0].metadata['new_mol_index']].metadata = atom.metadata
+            for atom in atoms_to_add.atoms:
+                new_mol.atoms[hyb_top.mol2_index[atom.index][0].metadata['new_mol_index']].metadata = atom.metadata
+        if return_hybrid_topology:
+            return new_mol, hyb_top,
+        else:
+            return new_mol
+```
+
+
+```python
+# Let's NOT assume that we can do this initially
+#del protein_ligand_topology.topology_molecules[1]
+
+
+ligand_topologymolecule = protein_ligand_topology.topology_molecules[1]
+new_top = protein_ligand_topology.remove_molecule(ligand_topologymolecule)
+```
+
+
+```python
+offmol = Molecule() #(default is hierarchy_flavor=openff.toolkit.topology.HIER_FLAVOR_DEFAULT)
+offmol.hierarchy_schemes
+> {'residues': HierScheme for residues, 'chains': HierScheme for chains}
+offmol.deregister_hierarchy_scheme('residues')
+offmol.register_hierarchy_scheme(HierarchyScheme(name='residues',
+                                                 uniqueness_key=('residue_idx', 'residue_type')))
+
+
+offmol2 = Molecule(hierarchy_flavor=openff.toolkit.topology.HIER_FLAVOR_NONE)
+offmol.hierarchy_schemes
+> {}
+
+```
+
+# Tests
+
+* Test running merge_molecules on two molecules that have an existing hierarchies with the SAME name, but DIFFERENT HierarchySchemes behind them. 
+    * An error should be raised, instructing the user to EITHER run merge_molecules with transfer_hierarchy_schemes=False
+      OR delete one of the colliding hierarchy schemes before merging.
+    * Upon deleting the colliding HierarchyScheme from the second molecule, the iterator should immediately dissapear
+      (`mol2.delete_hier_scheme('residues')` `mol2.residues --> AttributeError`) 
+    * If both mol1 and mol2 have iterators with the same name, they should be appended
+    * If ONLY mol1 OR mol2 have an iterator, the final mol should have that iterator, but immediately following
+      the merge, only some of the atoms in the new molecule (only those originally in iterators) should be included
+    * Atoms that were deleted should not appear in any iterators after the merge
+    * Residues/HierElements that had all their atoms deleted MAY appear in the new molecule
+    * Residues/HierElements with the same value of `uniqueness_key` should be merged in the new molecule
+    
+
+```python
+new_mol.perceive_hierarchy([atom_indices], [hierarchy_scheme_names])
+#new_mol.perceive_hierarchy({'residues': Molecule.HierScheme, 'chains': Molecule2.HierScheme})
+new_mol.register_hierarchy_scheme(hier_scheme_with_name_residues)
+new_mol.register_hierarchy_scheme(hier_scheme_with_name_chains)
+new_mol.perceive_hierarchy(['residues', 'chains'])                            
+new_mol.hierarchy_schemes
+> {'residues': <HierScheme with name 'residues'>, 'chains': <HierScheme2 with name 'chains'>...}
 ```
