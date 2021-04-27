@@ -1,3 +1,5 @@
+[![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/ijpulidos/openff-toolkit/collab-notebooks?urlpath=lab-dev)
+
 # Examples using SMIRNOFF with the toolkit
 
 The following examples are available in [the OpenFF toolkit repository](https://github.com/openforcefield/openff-toolkit/tree/master/examples). Each can be run interactively in the browser with [binder](https://mybinder.org/v2/gh/openforcefield/openforcefield/master?filepath=%2Fexamples%2F), without installing anything on your computer.
