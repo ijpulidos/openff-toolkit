@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Cloning jupyterlab rtc repo
-git clone https://github.com/jupyter-rtc-jupyterlab jupyterlab
+git clone https://github.com/jupyter-rtc/jupyterlab jupyterlab
 
 cd jupyterlab
 
