@@ -1,8 +1,16 @@
 #!/bin/bash
 set -euo pipefail
 
-pip install -e git+https://github.com/jupyter-rtc/jupyterlab@rtc#egg=jupyterlab
+# Cloning jupyterlab rtc repo
+git clone https://github.com/jupyter-rtc-jupyterlab jupyterlab
+
+cd jupyterlab
+
+pip install -e .
 
 jlpm
 
 jlpm build
+
+cd ..
+
